@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather Intelligence Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌤️ Weather Intelligence</h1>
+            <p class="subtitle">Real-time Forecast & Insights</p>
+        </header>
+
+        <!-- Search Section -->
+        <div class="search-section">
+            <input type="text" id="searchInput" placeholder="Search location..." value="Nairobi">
+            <button id="searchBtn">🔍 Search</button>
+        </div>
+
+        <!-- Loading & Error -->
+        <div id="loading" style="display: none;">⏳ Fetching weather data...</div>
+        <div id="error" style="display: none;"></div>
+
+        <!-- Dashboard -->
+        <div id="dashboard" style="display: none;">
+            <!-- Current Weather -->
+            <div class="card current-weather">
+                <div class="location-info">
+                    <h2 id="cityName">City</h2>
+                    <p id="countryName">Kenya</p>
+                </div>
+                <div class="weather-main">
+                    <div class="temp-section">
+                        <span id="temperature">--</span><span class="degree">°C</span>
+                        <p id="conditionText">Condition</p>
+                    </div>
+                    <div class="details">
+                        <p>💧 Humidity: <span id="humidity">--</span>%</p>
+                        <p>💨 Wind: <span id="windSpeed">--</span> km/h</p>
+                        <p>🌡️ Feels like: <span id="feelsLike">--</span>°C</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI Summary -->
+            <div class="card ai-summary">
+                <div class="ai-header">
+                    <span>🧠 Smart Weather Insight</span>
+                </div>
+                <p id="aiSummary">Loading weather insights...</p>
+            </div>
+
+            <!-- 7-Day Forecast -->
+            <div class="card forecast">
+                <h3>📅 7-Day Forecast</h3>
+                <div class="forecast-grid" id="forecastGrid"></div>
+            </div>
+
+            <!-- Temperature Trends Chart -->
+            <div class="card chart-container">
+                <h3>📈 Temperature Trends</h3>
+                <canvas id="trendChart"></canvas>
+            </div>
+
+            <!-- Smart Recommendations -->
+            <div class="card recommendations">
+                <h3>💡 Smart Recommendations</h3>
+                <ul id="recList">
+                    <li>Loading insights...</li>
+                </ul>
+            </div>
+            
+            <!-- Footer -->
+            <div class="rate-limit">
+                Powered by Open-Meteo · Free & Open Weather API
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let myChart = null;
+        const searchBtn = document.getElementById('searchBtn');
+        const searchInput = document.getElementById('searchInput');
+
+        function showError(msg) {
+            const el = document.getElementById('error');
+            el.textContent = msg;
+            el.style.display = 'block';
+            document.getElementById('dashboard').style.display = 'none';
+        }
+        function hideError() { 
+            document.getElementById('error').style.display = 'none'; 
+        }
+        function toggleLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+            searchBtn.disabled = show;
+        }
+
+        // Geocoding with Open-Meteo
+        async function getCoords(city) {
+            const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1`;
+            const resp = await fetch(url);
+            const data = await resp.json();
+            if (data.results && data.results.length > 0) {
+                const result = data.results[0];
+                return { lat: result.latitude, lon: result.longitude, name: result.name };
+            }
+            return null;
+        }
+
+        async function fetchWeather(lat, lon, city) {
+            toggleLoading(true);
+            hideError();
+            document.getElementById('dashboard').style.display = 'none';
+
+            try {
+                const url = `/weather?lat=${lat}&lon=${lon}&city=${encodeURIComponent(city || '')}`;
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data.error) {
+                    showError(`Error: ${data.error}`);
+                    toggleLoading(false);
+                    return;
+                }
+
+                renderDashboard(data);
+                document.getElementById('dashboard').style.display = 'block';
+            } catch (err) {
+                showError('Network error. Please check your connection.');
+            } finally {
+                toggleLoading(false);
+            }
+        }
+
+        function renderDashboard(data) {
+            // Current Weather
+            document.getElementById('cityName').textContent = data.location.name || 'N/A';
+            document.getElementById('temperature').textContent = data.current.temp || '--';
+            document.getElementById('conditionText').textContent = data.current.condition || 'Unknown';
+            document.getElementById('humidity').textContent = data.current.humidity || '--';
+            document.getElementById('windSpeed').textContent = data.current.wind_speed || '--';
+            document.getElementById('feelsLike').textContent = data.current.feels_like || '--';
+
+            // AI Summary
+            document.getElementById('aiSummary').textContent = data.ai_summary || 'No summary available.';
+
+            // Forecast
+            const grid = document.getElementById('forecastGrid');
+            grid.innerHTML = '';
+            data.forecast.forEach(day => {
+                const div = document.createElement('div');
+                div.className = 'forecast-day';
+                div.innerHTML = `
+                    <span class="day">${day.date}</span>
+                    <span class="condition">${day.condition}</span>
+                    <span class="high">↑${day.high}°</span>
+                    <span class="low">↓${day.low}°</span>
+                `;
+                grid.appendChild(div);
+            });
+
+            // Chart
+            if (myChart) myChart.destroy();
+            const ctx = document.getElementById('trendChart').getContext('2d');
+            const labels = data.forecast.map(d => d.date);
+            const highs = data.forecast.map(d => d.high);
+            const lows = data.forecast.map(d => d.low);
+
+            myChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'High °C', data: highs, borderColor: '#ff6b6b', backgroundColor: 'rgba(255,107,107,0.1)', tension: 0.3, pointRadius: 4 },
+                        { label: 'Low °C', data: lows, borderColor: '#4ecdc4', backgroundColor: 'rgba(78,205,196,0.1)', tension: 0.3, pointRadius: 4 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { labels: { color: '#ccc' } } },
+                    scales: { 
+                        x: { ticks: { color: '#aaa' } },
+                        y: { ticks: { color: '#aaa' } }
+                    }
+                }
+            });
+
+            // Recommendations
+            const recList = document.getElementById('recList');
+            recList.innerHTML = '';
+            const recs = data.recommendations || ['No recommendations available.'];
+            recs.forEach(text => {
+                const li = document.createElement('li');
+                li.textContent = text;
+                recList.appendChild(li);
+            });
+        }
+
+        // Search handler
+        searchBtn.addEventListener('click', async () => {
+            const city = searchInput.value.trim();
+            if (!city) { showError('Please enter a location.'); return; }
+
+            const coords = await getCoords(city);
+            if (!coords) {
+                showError('Location not found. Please try a different city.');
+                return;
+            }
+            searchInput.value = coords.name;
+            fetchWeather(coords.lat, coords.lon, coords.name);
+        });
+
+        searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') searchBtn.click();
+        });
+
+        // Auto-load on startup
+        window.onload = async () => {
+            const defaultCity = 'Nairobi';
+            const coords = await getCoords(defaultCity);
+            if (coords) {
+                searchInput.value = coords.name;
+                fetchWeather(coords.lat, coords.lon, coords.name);
+            }
+        };
+    </script>
+</body>
+</html>
